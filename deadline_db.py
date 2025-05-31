@@ -1,8 +1,10 @@
 import pandas as pd
 import sqlite3
 from datetime import datetime
+import os
 
-DB_PATH = "deadline_data.db"
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "deadline_data.db")
 
 
 def connect_db():
@@ -64,6 +66,7 @@ def extract_target_dates_from_csv(csv_file_or_path, keyword="00041"):
 
 # アップロード履歴テーブル関連
 
+
 def create_upload_log_table():
     conn = connect_db()
     cursor = conn.cursor()
@@ -84,8 +87,7 @@ def insert_upload_log(filename):
     conn = connect_db()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO upload_logs (filename, upload_time) VALUES (?, ?)",
-        (filename, datetime.now())
+        "INSERT INTO upload_logs (filename, upload_time) VALUES (?, ?)", (filename, datetime.now())
     )
     conn.commit()
     conn.close()
@@ -94,9 +96,7 @@ def insert_upload_log(filename):
 def fetch_latest_upload_log():
     conn = connect_db()
     cursor = conn.cursor()
-    cursor.execute(
-        "SELECT filename, upload_time FROM upload_logs ORDER BY upload_time DESC LIMIT 1"
-    )
+    cursor.execute("SELECT filename, upload_time FROM upload_logs ORDER BY upload_time DESC LIMIT 1")
     result = cursor.fetchone()
     conn.close()
     return result  # (filename, upload_time) or None
