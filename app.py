@@ -11,6 +11,7 @@ from deadline_db import (
     create_upload_log_table,
     insert_upload_log,
     fetch_latest_upload_log,
+    supabase,  # 追加でsupabaseをインポート
 )
 
 
@@ -38,16 +39,13 @@ def main():
     uploaded_file = st.file_uploader("CSVファイルをアップロード", type="csv")
 
     if uploaded_file is not None:
-        # 同名ファイルチェック
-        from deadline_db import connect_db
+        # Supabaseを使ったファイル名重複チェック
+        response = (
+            supabase.table("upload_logs").select("filename").eq("filename", uploaded_file.name).execute()
+        )
+        data = response.data
 
-        conn = connect_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM upload_logs WHERE filename = ?", (uploaded_file.name,))
-        count = cursor.fetchone()[0]
-        conn.close()
-
-        if count > 0:
+        if data and len(data) > 0:
             st.warning(f"ファイル名 '{uploaded_file.name}' は既にアップロードされています。上書きしますか？")
             if st.button("はい、上書きします"):
                 process_upload(uploaded_file)
@@ -90,6 +88,7 @@ def draw_graph():
         st.info("該当期間の納期データが存在しません。")
         return
 
+    # ▼ ここを修正：タプルから日付を取り出す
     due_dates = [datetime.strptime(row[0], "%Y-%m-%d").date() for row in results]
 
     df_due = pd.DataFrame(due_dates, columns=["変換日付"])
@@ -120,7 +119,6 @@ def draw_graph():
     )
 
     y_max = count_df["件数"].max()
-
     fig.update_layout(
         width=1200,
         height=600,

@@ -1,102 +1,85 @@
-import pandas as pd
-import sqlite3
-from datetime import datetime
 import os
+import pandas as pd
+from datetime import datetime
+from supabase import create_client, Client
+from dotenv import load_dotenv
 
+load_dotenv()
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "deadline_data.db")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_TABLE = "deadlines"
+SUPABASE_LOG_TABLE = "upload_logs"
 
-
-def connect_db():
-    return sqlite3.connect(DB_PATH)
-
-
-def create_table():
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS deadlines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            due_date DATE
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def insert_deadlines(records):
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.executemany("INSERT INTO deadlines (due_date) VALUES (?)", records)
-    conn.commit()
-    conn.close()
+    cleaned_records = []
+    for record in records:
+        # NaNやinfをNoneに変換1
+        cleaned = {
+            "due_date": record["due_date"],
+        }
+        cleaned_records.append(cleaned)
+
+    supabase.table(SUPABASE_TABLE).insert(cleaned_records).execute()
 
 
 def fetch_deadlines_between(start_date, end_date):
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT due_date FROM deadlines
-        WHERE due_date BETWEEN ? AND ?
-        ORDER BY due_date
-        """,
-        (start_date, end_date),
+    result = (
+        supabase.table(SUPABASE_TABLE)
+        .select("*")
+        .gte("due_date", start_date)
+        .lte("due_date", end_date)
+        .execute()
     )
-    results = cursor.fetchall()
-    conn.close()
-    return results
+    return [(row["due_date"],) for row in result.data]
 
 
-def extract_target_dates_from_csv(csv_file_or_path, keyword="00041"):
-    # csv_file_or_path はパス or BytesIO どちらも対応
-    df = pd.read_csv(csv_file_or_path, encoding="cp932")
-    target_cols = [col for col in df.columns if keyword in col]
-    if not target_cols:
-        raise ValueError("納期日カラムが見つかりませんでした")
-    target_col = target_cols[0]
-
-    df["変換日付"] = pd.to_datetime(df[target_col].astype(str), format="%y%m%d", errors="coerce")
-    df = df.dropna(subset=["変換日付"])
-    records = [(d.strftime("%Y-%m-%d"),) for d in df["変換日付"]]
-    return records, df["変換日付"]
-
-
-# アップロード履歴テーブル関連
+def create_table():
+    pass  # Supabaseでは不要
 
 
 def create_upload_log_table():
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS upload_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT,
-            upload_time DATETIME
-        )
-        """
-    )
-    conn.commit()
-    conn.close()
+    pass  # Supabaseでは不要
 
 
 def insert_upload_log(filename):
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO upload_logs (filename, upload_time) VALUES (?, ?)", (filename, datetime.now())
-    )
-    conn.commit()
-    conn.close()
+    supabase.table(SUPABASE_LOG_TABLE).insert(
+        {"filename": filename, "upload_time": datetime.now().isoformat()}
+    ).execute()
 
 
 def fetch_latest_upload_log():
-    conn = connect_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT filename, upload_time FROM upload_logs ORDER BY upload_time DESC LIMIT 1")
-    result = cursor.fetchone()
-    conn.close()
-    return result  # (filename, upload_time) or None
+    result = supabase.table(SUPABASE_LOG_TABLE).select("*").order("upload_time", desc=True).limit(1).execute()
+    if result.data:
+        return result.data[0]["filename"], result.data[0]["upload_time"]
+    return None
+
+
+def extract_target_dates_from_csv(uploaded_file):
+    try:
+        df = pd.read_csv(uploaded_file, encoding="cp932")
+    except UnicodeDecodeError:
+        df = pd.read_csv(uploaded_file, encoding="utf-8")
+
+    target_column = "00041確認納期（回答納期）01"
+
+    if target_column not in df.columns:
+        raise Exception(f"CSVに '{target_column}' 列が見つかりません")
+
+    # 日付変換：YYMMDD形式 → YYYY-MM-DD
+    def convert_ymd(value):
+        try:
+            value_str = str(value).strip()
+            return datetime.strptime(value_str, "%y%m%d").strftime("%Y-%m-%d")
+        except Exception:
+            return None
+
+    df["converted_date"] = df[target_column].apply(convert_ymd)
+    df_cleaned = df[df["converted_date"].notna()].copy()
+
+    records = [{"due_date": date} for date in df_cleaned["converted_date"]]
+
+    return records, df_cleaned["converted_date"]
